@@ -30,13 +30,13 @@ func (is *Server) GetPluginCapabilities(
 					},
 				},
 			},
-			{
-				Type: &csi.PluginCapability_VolumeExpansion_{
-					VolumeExpansion: &csi.PluginCapability_VolumeExpansion{
-						Type: csi.PluginCapability_VolumeExpansion_ONLINE, // TODO: Check if it is possible to support ONLINE expansion
-					},
-				},
-			},
+			// {
+			// 	Type: &csi.PluginCapability_VolumeExpansion_{
+			// 		VolumeExpansion: &csi.PluginCapability_VolumeExpansion{
+			// 			Type: csi.PluginCapability_VolumeExpansion_ONLINE, // TODO: Check if it is possible to support ONLINE expansion
+			// 		},
+			// 	},
+			// },
 		},
 	}, nil
 }

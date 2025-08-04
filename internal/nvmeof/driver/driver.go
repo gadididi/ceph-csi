@@ -4,6 +4,7 @@ import (
 	csicommon "github.com/ceph/ceph-csi/internal/csi-common"
 	"github.com/ceph/ceph-csi/internal/nvmeof/controller"
 	"github.com/ceph/ceph-csi/internal/nvmeof/identity"
+	"github.com/ceph/ceph-csi/internal/rbd"
 	"github.com/ceph/ceph-csi/internal/util"
 	"github.com/ceph/ceph-csi/internal/util/log"
 
@@ -20,6 +21,15 @@ func NewDriver() *Driver {
 
 // Run starts the NVMe-oF CSI driver.
 func (d *Driver) Run(conf *util.Config) {
+	// TODO: move rbd initialization to a common function
+	// update clone soft and hard limit
+	rbd.SetGlobalInt("rbdHardMaxCloneDepth", conf.RbdHardMaxCloneDepth)
+	rbd.SetGlobalInt("rbdSoftMaxCloneDepth", conf.RbdSoftMaxCloneDepth)
+	rbd.SetGlobalBool("skipForceFlatten", conf.SkipForceFlatten)
+	rbd.SetGlobalInt("maxSnapshotsOnImage", conf.MaxSnapshotsOnImage)
+	rbd.SetGlobalInt("minSnapshotsOnImageToStartFlatten", conf.MinSnapshotsOnImage)
+	// Create instances of the volume and snapshot journal
+	rbd.InitJournals(conf.InstanceID)
 	// Initialize CSI driver
 	cd := csicommon.NewCSIDriver(conf.DriverName, util.DriverVersion, conf.NodeID, conf.InstanceID, conf.EnableFencing)
 	if cd == nil {
