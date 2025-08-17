@@ -306,12 +306,18 @@ func (gw *GatewayRpcClient) AddHost(ctx context.Context, subsystemNQN, hostNQN s
 	if err != nil {
 		return fmt.Errorf("failed to add host %s to subsystem %s: %w", hostNQN, subsystemNQN, err)
 	}
-	if resp.GetStatus() != 0 {
-		return fmt.Errorf("gateway AddHost returned error (status=%d): %s", resp.GetStatus(), resp.GetErrorMessage())
-	}
-	log.DebugLog(ctx, "Host added successfully: %s to subsystem %s", hostNQN, subsystemNQN)
+	if resp.GetStatus() == 0 {
+		log.DebugLog(ctx, "Host added successfully: %s to subsystem %s", hostNQN, subsystemNQN)
 
-	return nil
+		return nil
+	}
+	if resp.GetStatus() == int32(syscall.EEXIST) { // EEXIST
+		log.DebugLog(ctx, "Host %s already added to subsystem %s", hostNQN, subsystemNQN)
+
+		return nil // Host already added, no error
+	}
+	return fmt.Errorf("gateway AddHost returned error (status=%d): %s", resp.GetStatus(), resp.GetErrorMessage())
+
 }
 
 func (gw *GatewayRpcClient) CreateListener(ctx context.Context, subsystemNQN string, listenerInfo ListenerDetails,
@@ -332,13 +338,17 @@ func (gw *GatewayRpcClient) CreateListener(ctx context.Context, subsystemNQN str
 	if err != nil {
 		return fmt.Errorf("failed to add listener %s to subsystem %s: %w", listenerInfo.Address, subsystemNQN, err)
 	}
-	if resp.GetStatus() != 0 {
-		return fmt.Errorf("gateway AddListener returned error (status=%d): %s", resp.GetStatus(), resp.GetErrorMessage())
+	if resp.GetStatus() == 0 {
+		log.DebugLog(ctx, "Listener added successfully: %s to subsystem %s", listenerInfo.Address, subsystemNQN)
+
+		return nil
 	}
+	if resp.GetStatus() == int32(syscall.EEXIST) { // EEXIST
+		log.DebugLog(ctx, "Listener %s already created for subsystem %s", listenerInfo.Address, subsystemNQN)
 
-	log.DebugLog(ctx, "Listener added successfully: %s to subsystem %s", listenerInfo.Address, subsystemNQN)
-
-	return nil
+		return nil // Listener already created, no error
+	}
+	return fmt.Errorf("gateway AddListener returned error (status=%d): %s", resp.GetStatus(), resp.GetErrorMessage())
 }
 
 // DeleteListener removes a listener from a subsystem.
