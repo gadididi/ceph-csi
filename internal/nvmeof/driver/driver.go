@@ -4,6 +4,7 @@ import (
 	csicommon "github.com/ceph/ceph-csi/internal/csi-common"
 	"github.com/ceph/ceph-csi/internal/nvmeof/controller"
 	"github.com/ceph/ceph-csi/internal/nvmeof/identity"
+	"github.com/ceph/ceph-csi/internal/nvmeof/nodeserver"
 	"github.com/ceph/ceph-csi/internal/rbd"
 	"github.com/ceph/ceph-csi/internal/util"
 	"github.com/ceph/ceph-csi/internal/util/log"
@@ -61,10 +62,13 @@ func (d *Driver) Run(conf *util.Config) {
 		IS: identity.NewIdentityServer(cd),
 	}
 
-	// TODO - add NodeServer support for NVMe-oF
 	switch {
 	case conf.IsNodeServer:
-		// srv.NS = nodeserver.NewNodeServer(cd, conf.Vtype) // TODO: Implement NodeServer for NVMe-oF
+		ns, err := nodeserver.NewNodeServer(cd, conf.Vtype)
+		if err != nil {
+			log.FatalLogMsg("failed to initialize node server: %v", err)
+		}
+		srv.NS = ns
 	case conf.IsControllerServer:
 		cs, err := controller.NewControllerServer(cd)
 		if err != nil {
@@ -72,7 +76,11 @@ func (d *Driver) Run(conf *util.Config) {
 		}
 		srv.CS = cs
 	default:
-		// srv.NS = nodeserver.NewNodeServer(cd, conf.Vtype) //TODO: Implement NodeServer for NVMe-oF
+		ns, err := nodeserver.NewNodeServer(cd, conf.Vtype)
+		if err != nil {
+			log.FatalLogMsg("failed to initialize node server: %v", err)
+		}
+		srv.NS = ns
 		cs, err := controller.NewControllerServer(cd)
 		if err != nil {
 			log.FatalLogMsg("failed to initialize controller server: %v", err)
