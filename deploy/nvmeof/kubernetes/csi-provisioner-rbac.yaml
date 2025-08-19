@@ -1,6 +1,6 @@
 ---
-apiVersion: v1
 kind: ServiceAccount
+apiVersion: v1
 metadata:
   name: nvmeof-csi-provisioner
   # replace with non-default namespace name
@@ -38,10 +38,10 @@ rules:
     verbs: ["get", "list", "watch", "update", "patch", "create"]
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshots/status"]
-    verbs: ["get", "list", "patch"]  # Fixed: match RBD
+    verbs: ["get", "list", "patch"]
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshotcontents"]
-    verbs: ["create", "get", "list", "watch", "update", "delete", "patch"]  # Fixed: match RBD order
+    verbs: ["create", "get", "list", "watch", "update", "delete", "patch"]
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshotclasses"]
     verbs: ["get", "list", "watch"]
@@ -81,7 +81,6 @@ rules:
   - apiGroups: ["replication.storage.openshift.io"]
     resources: ["volumegroupreplicationclasses"]
     verbs: ["get"]
-
 ---
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
@@ -96,7 +95,6 @@ roleRef:
   kind: ClusterRole
   name: nvmeof-external-provisioner-runner
   apiGroup: rbac.authorization.k8s.io
-
 ---
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
@@ -111,7 +109,6 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "watch", "list", "delete", "update", "create"]
-
 ---
 kind: RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
@@ -128,3 +125,32 @@ roleRef:
   kind: Role
   name: nvmeof-external-provisioner-cfg
   apiGroup: rbac.authorization.k8s.io
+# ---
+# # ssc based on the Ceph-CSI ssc
+# # the "users:" contains a reference to the "openshift-storage" namespace
+# #
+# kind: SecurityContextConstraints
+# apiVersion: security.openshift.io/v1
+# metadata:
+#   name: "ceph-nvmeof-provisioner"
+# # To allow running privilegedContainers
+# allowPrivilegedContainer: true
+# # SYS_ADMIN is needed for rbd to execute rbd map command
+# allowedCapabilities:
+#   - "SYS_ADMIN"
+# # Set to false as we write to RootFilesystem inside container
+# readOnlyRootFilesystem: false
+# requiredDropCapabilities:
+#   - ALL
+# # The type of volumes which are mounted to csi pods
+# volumes:
+#   - configMap
+#   - projected
+#   - emptyDir
+# runAsUser:
+#   type: RunAsAny
+# seLinuxContext:
+#   type: RunAsAny
+# users:
+#   # A user needs to be added for each service account.
+#   - "system:serviceaccount:openshift-storage:nvmeof-csi-provisioner"
