@@ -19,6 +19,7 @@ require (
 	github.com/csi-addons/kubernetes-csi-addons v0.13.0
 	github.com/csi-addons/spec v0.2.1-0.20250610152019-b5a7205f6a79
 	github.com/gemalto/kmip-go v0.0.10
+	github.com/gofrs/flock v0.12.1
 	github.com/golang/protobuf v1.5.4
 	github.com/google/fscrypt v0.3.6-0.20240502174735-068b9f8f5dec
 	github.com/google/uuid v1.6.0

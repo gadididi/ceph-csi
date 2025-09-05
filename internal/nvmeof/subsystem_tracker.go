@@ -23,8 +23,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sync"
 	"time"
+
+	"github.com/gofrs/flock"
 
 	"github.com/ceph/ceph-csi/internal/util/log"
 )
@@ -32,6 +33,8 @@ import (
 const (
 	// Default state directory for tracking subsystem references.
 	defaultStateDir = "/var/lib/ceph-csi/nvmeof"
+	// File name for obtaining a cross-process lock.
+	lockFileName = "subsystem-state.lock"
 	// File name for subsystem state.
 	stateFileName = "subsystem-state.json"
 )
@@ -68,7 +71,7 @@ type fileBasedTracker struct {
 	stateDir  string
 	stateFile string
 	nodeID    string
-	mutex     sync.RWMutex
+	lock      *flock.Flock
 	state     *trackerState
 }
 
@@ -83,6 +86,7 @@ func NewFileBasedTracker(nodeID string, stateDir ...string) (SubsystemTracker, e
 		stateDir:  dir,
 		stateFile: filepath.Join(dir, stateFileName),
 		nodeID:    nodeID,
+		lock:      flock.New(dir + "/" + lockFileName),
 		state: &trackerState{
 			Version:    "v1", // TODO: is it good to have version? from where I can fetch it?
 			NodeID:     nodeID,
@@ -107,8 +111,15 @@ func NewFileBasedTracker(nodeID string, stateDir ...string) (SubsystemTracker, e
 func (t *fileBasedTracker) AddReference(ctx context.Context, subsystemNQN, volumeID string) (uint32, error) {
 	log.DebugLog(ctx, "Adding reference for subsystem %s", subsystemNQN)
 
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
+	if err := t.lock.Lock(); err != nil {
+		return 0, fmt.Errorf("failed to lock %q: %w", t.lock, err)
+	}
+	defer func() {
+		unlockErr := t.lock.Unlock()
+		if unlockErr != nil {
+			log.ErrorLogMsg("failed to unlock %q: %v", t.lock, unlockErr)
+		}
+	}()
 
 	// Get or create subsystem state
 	subsysState, exists := t.state.Subsystems[subsystemNQN]
@@ -120,6 +131,11 @@ func (t *fileBasedTracker) AddReference(ctx context.Context, subsystemNQN, volum
 			Volumes:        make([]string, 0),
 		}
 		t.state.Subsystems[subsystemNQN] = subsysState
+	}
+
+	// when the subsystem contains the volume already, return
+	if slices.Contains(subsysState.Volumes, volumeID) {
+		return subsysState.ReferenceCount, nil
 	}
 
 	// Increment reference count
@@ -148,14 +164,26 @@ func (t *fileBasedTracker) AddReference(ctx context.Context, subsystemNQN, volum
 func (t *fileBasedTracker) RemoveReference(ctx context.Context, subsystemNQN, volumeID string) (bool, uint32, error) {
 	log.DebugLog(ctx, "Removing reference for subsystem %s", subsystemNQN)
 
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
+	if err := t.lock.Lock(); err != nil {
+		return false, 0, fmt.Errorf("failed to lock %q: %w", t.lock, err)
+	}
+	defer func() {
+		unlockErr := t.lock.Unlock()
+		if unlockErr != nil {
+			log.ErrorLogMsg("failed to unlock %q: %v", t.lock, unlockErr)
+		}
+	}()
 
 	subsysState, exists := t.state.Subsystems[subsystemNQN]
 	if !exists {
 		log.WarningLog(ctx, "Attempted to remove reference for unknown subsystem %s", subsystemNQN)
 
 		return true, 0, nil // Consider it as "should disconnect"
+	}
+
+	// when the subsystem does not contain the volume, return
+	if !slices.Contains(subsysState.Volumes, volumeID) {
+		return false, subsysState.ReferenceCount, nil
 	}
 
 	// Decrement reference count
@@ -213,32 +241,18 @@ func removeVolumeFromSubsystem(subsysState *subsystemState, volumeID string) {
 	subsysState.Volumes = newVolumes
 }
 
-// GetState returns a copy of the current tracker state for debugging.
-func (t *fileBasedTracker) GetState(ctx context.Context) map[string]interface{} {
-	t.mutex.RLock()
-	defer t.mutex.RUnlock()
-
-	state := make(map[string]interface{})
-	state["version"] = t.state.Version
-	state["node_id"] = t.state.NodeID
-	state["last_update"] = t.state.LastUpdate
-	state["subsystem_count"] = len(t.state.Subsystems)
-
-	subsystems := make(map[string]interface{})
-	for nqn, subsys := range t.state.Subsystems {
-		subsystems[nqn] = map[string]interface{}{
-			"reference_count": subsys.ReferenceCount,
-			"last_updated":    subsys.LastUpdated,
-			"volume_count":    len(subsys.Volumes),
-		}
-	}
-	state["subsystems"] = subsystems
-
-	return state
-}
-
 // loadState loads the subsystem state from disk.
 func (t *fileBasedTracker) loadState() error {
+	if err := t.lock.RLock(); err != nil {
+		return fmt.Errorf("failed to lock %q: %w", t.lock, err)
+	}
+	defer func() {
+		unlockErr := t.lock.Unlock()
+		if unlockErr != nil {
+			log.ErrorLogMsg("failed to unlock %q: %v", t.lock, unlockErr)
+		}
+	}()
+
 	// Check if state file exists
 	if _, err := os.Stat(t.stateFile); os.IsNotExist(err) {
 		log.DefaultLog("State file %s does not exist, starting with empty state", t.stateFile)
@@ -277,7 +291,7 @@ func (t *fileBasedTracker) loadState() error {
 	return nil
 }
 
-// saveStateLocked saves the current state to disk (must be called with mutex held).
+// saveStateLocked saves the current state to disk (must be called with lock held).
 func (t *fileBasedTracker) saveStateLocked() error {
 	// Update timestamp
 	t.state.LastUpdate = time.Now()
