@@ -86,8 +86,11 @@ func TestPolulateVolumeContext(t *testing.T) {
 			},
 		},
 		GatewayManagementInfo: nvmeof.GatewayConfig{
-			Address: "127.0.0.2",
-			Port:    5500,
+			GatewayAddress: nvmeof.GatewayAddress{
+				Address: "127.0.0.2",
+				Port:    5500,
+			},
+			MTLSEnabled: false,
 		},
 	}
 
@@ -142,6 +145,14 @@ func TestGetGatewayConfigFromRequest(t *testing.T) {
 			params: map[string]string{
 				"nvmeofGatewayAddress": "127.0.0.1",
 				"nvmeofGatewayPort":    "5500",
+			},
+			shouldFail: true,
+		},
+		{
+			params: map[string]string{
+				"nvmeofGatewayAddress":     "127.0.0.1",
+				"nvmeofGatewayPort":        "5500",
+				"nvmeofGatewayMtlsEnabled": "true",
 			},
 		},
 	}

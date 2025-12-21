@@ -62,8 +62,11 @@ func TestRealGateway(t *testing.T) {
 		t.Fatalf("Invalid NVMEOF_GATEWAY_PORT '%s': %v", portstr, err)
 	}
 	config := &nvmeof.GatewayConfig{
-		Address: address,
-		Port:    uint32(portUint32),
+		GatewayAddress: nvmeof.GatewayAddress{
+			Address: address,
+			Port:    uint32(portUint32),
+		},
+		MTLSEnabled: false,
 	}
 
 	client, err := nvmeof.NewGatewayRpcClient(config)

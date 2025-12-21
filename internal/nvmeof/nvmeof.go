@@ -25,7 +25,6 @@ import (
 
 	pb "github.com/ceph/ceph-nvmeof/lib/go/nvmeof"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 
 	nvmeoferrors "github.com/ceph/ceph-csi/internal/nvmeof/errors"
@@ -55,7 +54,10 @@ func (ga ListenerDetails) String() string {
 }
 
 // Config holds gateway client configuration.
-type GatewayConfig = GatewayAddress
+type GatewayConfig struct {
+	GatewayAddress
+	MTLSEnabled bool
+}
 
 // GatewayClient wraps the gRPC client and connection details.
 type GatewayRpcClient struct {
@@ -480,9 +482,14 @@ func (gw *GatewayRpcClient) ListNamespaces(ctx context.Context, subsystemNQN str
 
 // Connect to Gateway gRPC server.
 func (c *GatewayRpcClient) connect() error {
+	// Load TLS credentials (mTLS or insecure based on config)
+	creds, err := c.loadTLSCredentials()
+	if err != nil {
+		return fmt.Errorf("failed to load TLS credentials: %w", err)
+	}
 	// Create connection using new gRPC API
 	conn, err := grpc.NewClient(c.config.String(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create Gateway gRPC client: %w", err)

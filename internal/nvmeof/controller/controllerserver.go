@@ -503,8 +503,11 @@ func (cs *Server) modifyNVMeoFQoS(
 
 	// Step 3: Connect to gateway
 	config := &nvmeof.GatewayConfig{
-		Address: nvmeofData.GatewayManagementInfo.Address,
-		Port:    nvmeofData.GatewayManagementInfo.Port,
+		GatewayAddress: nvmeof.GatewayAddress{
+			Address: nvmeofData.GatewayManagementInfo.Address,
+			Port:    nvmeofData.GatewayManagementInfo.Port,
+		},
+		MTLSEnabled: nvmeofData.GatewayManagementInfo.MTLSEnabled,
 	}
 	gateway, err := connectGateway(ctx, config)
 	if err != nil {
@@ -639,21 +642,20 @@ func (cs *Server) createNVMeoFResources(
 		return nil, fmt.Errorf("failed to parse listeners: %w", err)
 	}
 
-	nvmeofGatewayPortStr := params["nvmeofGatewayPort"]
-	nvmeofGatewayPort, err := strconv.ParseUint(nvmeofGatewayPortStr, 10, 32)
+	// Parse gateway config
+	gatewayConfig, err := getGatewayConfigFromRequest(params)
 	if err != nil {
-		return nil, fmt.Errorf("invalid nvmeofGatewayPort %s: %w", nvmeofGatewayPortStr, err)
+		return nil, err
 	}
+
 	nvmeofData := &nvmeof.NVMeoFVolumeData{
-		SubsystemNQN:  params["subsystemNQN"],
-		NamespaceID:   0,  // will be set after namespace creation,
-		NamespaceUUID: "", // will be set after namespace creation
-		ListenerInfo:  listeners,
-		GatewayManagementInfo: nvmeof.GatewayConfig{
-			Address: params["nvmeofGatewayAddress"],
-			Port:    uint32(nvmeofGatewayPort),
-		},
+		SubsystemNQN:          params["subsystemNQN"],
+		NamespaceID:           0,  // will be set after namespace creation,
+		NamespaceUUID:         "", // will be set after namespace creation
+		ListenerInfo:          listeners,
+		GatewayManagementInfo: *gatewayConfig,
 	}
+
 	// extract Qos parameters if any
 	mutableParams := req.GetMutableParameters()
 	// It take the mutableParams value from the volumeAttributesClassName in the PersistentVolumeClaim yaml.
@@ -666,11 +668,7 @@ func (cs *Server) createNVMeoFResources(
 	}
 
 	// Step 2: Connect to gateway
-	config, err := getGatewayConfigFromRequest(params)
-	if err != nil {
-		return nil, err
-	}
-	gateway, err := connectGateway(ctx, config)
+	gateway, err := connectGateway(ctx, gatewayConfig)
 	if err != nil {
 		return nil, fmt.Errorf("gateway connection failed: %w", err)
 	}
@@ -730,8 +728,11 @@ func (cs *Server) cleanupNVMeoFResources(
 ) error {
 	// Step 1: Connect to gateway using stored management address
 	gateway, err := connectGateway(ctx, &nvmeof.GatewayConfig{
-		Address: nvmeofData.GatewayManagementInfo.Address,
-		Port:    nvmeofData.GatewayManagementInfo.Port,
+		GatewayAddress: nvmeof.GatewayAddress{
+			Address: nvmeofData.GatewayManagementInfo.Address,
+			Port:    nvmeofData.GatewayManagementInfo.Port,
+		},
+		MTLSEnabled: nvmeofData.GatewayManagementInfo.MTLSEnabled,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to connect to gateway for cleanup: %w", err)
@@ -783,7 +784,11 @@ func publishResources(ctx context.Context,
 	subsystemNQN := volumeContext[vcSubsystemNQN]
 	gatewayAddr := volumeContext[vcGatewayAddress]
 	gatewayPortStr := volumeContext[vcGatewayPort]
-
+	gatewayMtls := volumeContext[vcGatewayMTLS]
+	gatewayEbaleMtls, err := strconv.ParseBool(gatewayMtls)
+	if err != nil {
+		return "", fmt.Errorf("invalid gateway mtls value %s: %w", gatewayMtls, err)
+	}
 	// Convert gateway port from string to uint32
 	gatewayPort, err := strconv.ParseUint(gatewayPortStr, 10, 32)
 	if err != nil {
@@ -791,8 +796,11 @@ func publishResources(ctx context.Context,
 	}
 	// Connect to gateway and add host
 	config := &nvmeof.GatewayConfig{
-		Address: gatewayAddr,
-		Port:    uint32(gatewayPort),
+		GatewayAddress: nvmeof.GatewayAddress{
+			Address: gatewayAddr,
+			Port:    uint32(gatewayPort),
+		},
+		MTLSEnabled: gatewayEbaleMtls,
 	}
 	gateway, err := connectGateway(ctx, config)
 	if err != nil {
@@ -824,11 +832,15 @@ func unpublishResources(ctx context.Context, data *nvmeof.NVMeoFVolumeData, node
 	subsystemNQN := data.SubsystemNQN
 	gatewayAddr := data.GatewayManagementInfo.Address
 	gatewayPort := data.GatewayManagementInfo.Port
+	gatewayMTLS := data.GatewayManagementInfo.MTLSEnabled
 
 	// Connect to gateway and add host
 	config := &nvmeof.GatewayConfig{
-		Address: gatewayAddr,
-		Port:    gatewayPort,
+		GatewayAddress: nvmeof.GatewayAddress{
+			Address: gatewayAddr,
+			Port:    gatewayPort,
+		},
+		MTLSEnabled: gatewayMTLS,
 	}
 	gateway, err := connectGateway(ctx, config)
 	if err != nil {
@@ -892,6 +904,7 @@ const (
 	// Gateway management info.
 	vcGatewayAddress = "GatewayAddress"
 	vcGatewayPort    = "GatewayPort"
+	vcGatewayMTLS    = "GatewayMTLS"
 )
 
 // toRBDMetadataKey converts clean volume context key to prefixed RBD metadata key.
@@ -911,6 +924,7 @@ func populateVolumeContext(volume *csi.Volume, data *nvmeof.NVMeoFVolumeData) er
 	volume.VolumeContext[vcNamespaceUUID] = data.NamespaceUUID
 	volume.VolumeContext[vcGatewayAddress] = data.GatewayManagementInfo.Address
 	volume.VolumeContext[vcGatewayPort] = gatewayManagementInfoPortStr
+	volume.VolumeContext[vcGatewayMTLS] = strconv.FormatBool(data.GatewayManagementInfo.MTLSEnabled)
 
 	// Store listeners as JSON
 	listenersJSON, err := json.Marshal(data.ListenerInfo)
@@ -972,6 +986,7 @@ func (cs *Server) storeNVMeoFMetadata(
 		// Gateway management info
 		toRBDMetadataKey(vcGatewayAddress): nvmeofData.GatewayManagementInfo.Address,
 		toRBDMetadataKey(vcGatewayPort):    gatewayManagementInfoPortStr,
+		toRBDMetadataKey(vcGatewayMTLS):    strconv.FormatBool(nvmeofData.GatewayManagementInfo.MTLSEnabled),
 	}
 
 	// Store all metadata entries
@@ -1023,6 +1038,7 @@ func (cs *Server) getNVMeoFMetadata(
 		toRBDMetadataKey(vcListeners),
 		toRBDMetadataKey(vcGatewayAddress),
 		toRBDMetadataKey(vcGatewayPort),
+		toRBDMetadataKey(vcGatewayMTLS),
 	}
 
 	// Retrieve all metadata values
@@ -1052,6 +1068,12 @@ func (cs *Server) getNVMeoFMetadata(
 			nvmeoferrors.ErrMetadataCorrupted, err)
 	}
 
+	gatewayMTLS, err := strconv.ParseBool(metadata[toRBDMetadataKey(vcGatewayMTLS)])
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid gateway MTLS value (true/false): %w",
+			nvmeoferrors.ErrMetadataCorrupted, err)
+	}
+
 	// Parse listeners from JSON
 	var listeners []nvmeof.ListenerDetails
 	if err := json.Unmarshal([]byte(metadata[toRBDMetadataKey(vcListeners)]), &listeners); err != nil {
@@ -1067,8 +1089,11 @@ func (cs *Server) getNVMeoFMetadata(
 		ListenerInfo:  listeners,
 		// Store gateway management info separately
 		GatewayManagementInfo: nvmeof.GatewayConfig{
-			Address: metadata[toRBDMetadataKey(vcGatewayAddress)],
-			Port:    uint32(gatewayPort),
+			GatewayAddress: nvmeof.GatewayAddress{
+				Address: metadata[toRBDMetadataKey(vcGatewayAddress)],
+				Port:    uint32(gatewayPort),
+			},
+			MTLSEnabled: gatewayMTLS,
 		},
 	}
 
@@ -1094,9 +1119,21 @@ func getGatewayConfigFromRequest(params map[string]string) (*nvmeof.GatewayConfi
 		return nil, fmt.Errorf("invalid port %s: %w", portStr, err)
 	}
 
+	// Parse nvmeofGatewayMtlsEnabled (optional, defaults to false)
+	mtlsEnabled := false
+	if mtlsStr, ok := params["nvmeofGatewayMtlsEnabled"]; ok && mtlsStr != "" {
+		mtlsEnabled, err = strconv.ParseBool(mtlsStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid mtlsEnabled value %s: %w", mtlsStr, err)
+		}
+	}
+
 	return &nvmeof.GatewayConfig{
-		Address: address,
-		Port:    uint32(port),
+		GatewayAddress: nvmeof.GatewayAddress{
+			Address: address,
+			Port:    uint32(port),
+		},
+		MTLSEnabled: mtlsEnabled,
 	}, nil
 }
 
